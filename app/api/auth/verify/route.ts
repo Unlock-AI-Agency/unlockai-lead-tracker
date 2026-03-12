@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import getDb from "@/lib/db";
+import getDb, { initDb } from "@/lib/db";
 
 export async function GET(req: NextRequest) {
   const token = new URL(req.url).searchParams.get("token");
@@ -8,18 +8,16 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Missing token" }, { status: 400 });
   }
 
-  const db = getDb();
-  const user = db
-    .prepare("SELECT id FROM users WHERE verify_token = ? AND verified = 0")
-    .get(token) as { id: string } | undefined;
+  await initDb();
+  const sql = getDb();
+  const rows = await sql`SELECT id FROM users WHERE verify_token = ${token} AND verified = 0`;
 
-  if (!user) {
+  if (rows.length === 0) {
     return NextResponse.json({ error: "Invalid or expired token" }, { status: 400 });
   }
 
-  db.prepare("UPDATE users SET verified = 1, verify_token = NULL WHERE id = ?").run(user.id);
+  await sql`UPDATE users SET verified = 1, verify_token = NULL WHERE id = ${rows[0].id}`;
 
-  // Redirect to login with success message
   const baseUrl = req.headers.get("x-forwarded-host")
     ? `${req.headers.get("x-forwarded-proto") || "https"}://${req.headers.get("x-forwarded-host")}`
     : new URL(req.url).origin;

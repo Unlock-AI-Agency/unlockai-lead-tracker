@@ -1,5 +1,5 @@
 import { cookies } from "next/headers";
-import getDb from "./db";
+import getDb, { initDb } from "./db";
 import { generateSessionId } from "./crypto";
 
 const SESSION_COOKIE = "lt_session";
@@ -12,15 +12,12 @@ type User = {
 };
 
 export async function createSession(userId: string): Promise<string> {
-  const db = getDb();
+  await initDb();
+  const sql = getDb();
   const id = generateSessionId();
   const expiresAt = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
-  db.prepare("INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)").run(
-    id,
-    userId,
-    expiresAt
-  );
+  await sql`INSERT INTO sessions (id, user_id, expires_at) VALUES (${id}, ${userId}, ${expiresAt})`;
 
   const cookieStore = await cookies();
   cookieStore.set(SESSION_COOKIE, id, {
@@ -39,23 +36,21 @@ export async function getSessionUser(): Promise<User | null> {
   const sessionId = cookieStore.get(SESSION_COOKIE)?.value;
   if (!sessionId) return null;
 
-  const db = getDb();
-  const row = db
-    .prepare(
-      `SELECT u.id, u.email, u.name
-       FROM sessions s
-       JOIN users u ON u.id = s.user_id
-       WHERE s.id = ? AND s.expires_at > datetime('now') AND u.verified = 1`
-    )
-    .get(sessionId) as User | undefined;
+  await initDb();
+  const sql = getDb();
+  const rows = await sql`
+    SELECT u.id, u.email, u.name
+    FROM sessions s
+    JOIN users u ON u.id = s.user_id
+    WHERE s.id = ${sessionId} AND s.expires_at > now() AND u.verified = 1
+  `;
 
-  if (!row) {
-    // Clean up expired/invalid session
-    db.prepare("DELETE FROM sessions WHERE id = ?").run(sessionId);
+  if (rows.length === 0) {
+    await sql`DELETE FROM sessions WHERE id = ${sessionId}`;
     return null;
   }
 
-  return row;
+  return rows[0] as User;
 }
 
 export async function destroySession(): Promise<void> {
@@ -63,8 +58,9 @@ export async function destroySession(): Promise<void> {
   const sessionId = cookieStore.get(SESSION_COOKIE)?.value;
 
   if (sessionId) {
-    const db = getDb();
-    db.prepare("DELETE FROM sessions WHERE id = ?").run(sessionId);
+    await initDb();
+    const sql = getDb();
+    await sql`DELETE FROM sessions WHERE id = ${sessionId}`;
     cookieStore.delete(SESSION_COOKIE);
   }
 }

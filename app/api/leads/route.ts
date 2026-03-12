@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuid } from "uuid";
-import getDb from "@/lib/db";
+import getDb, { initDb } from "@/lib/db";
 import { authenticate, authenticateAdmin } from "@/lib/auth";
 import { notifyLead } from "@/lib/notify";
 
-// POST /api/leads — record a new lead (API key auth)
 export async function POST(req: NextRequest) {
-  const auth = authenticate(req);
+  const auth = await authenticate(req);
   if (!auth.valid) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -16,34 +15,18 @@ export async function POST(req: NextRequest) {
     const { source = "quote_form", name, email, phone, type, metadata } = body;
 
     const id = uuid();
-    const db = getDb();
+    await initDb();
+    const sql = getDb();
 
-    db.prepare(`
+    await sql`
       INSERT INTO leads (id, project_id, client_id, source, name, email, phone, type, metadata)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      id,
-      auth.projectId,
-      auth.projectSlug,
-      source,
-      name ?? null,
-      email ?? null,
-      phone ?? null,
-      type ?? null,
-      metadata ? JSON.stringify(metadata) : null
-    );
+      VALUES (${id}, ${auth.projectId}, ${auth.projectSlug}, ${source}, ${name ?? null}, ${email ?? null}, ${phone ?? null}, ${type ?? null}, ${metadata ? JSON.stringify(metadata) : null})
+    `;
 
-    // Get project name for the email
-    const project = db.prepare("SELECT name FROM projects WHERE id = ?").get(auth.projectId) as { name: string } | undefined;
+    const projects = await sql`SELECT name FROM projects WHERE id = ${auth.projectId}`;
 
-    // Fire-and-forget: send notification email
-    notifyLead(auth.projectId, project?.name ?? auth.projectSlug, {
-      source,
-      name,
-      email,
-      phone,
-      type,
-      metadata,
+    notifyLead(auth.projectId, projects[0]?.name ?? auth.projectSlug, {
+      source, name, email, phone, type, metadata,
     }).catch(() => {});
 
     return NextResponse.json({ id, status: "recorded" }, { status: 201 });
@@ -53,47 +36,39 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// GET /api/leads — list recent leads (API key or admin auth)
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
-  const db = getDb();
 
   let projectId: string;
 
-  // Admin can query any project
-  if (authenticateAdmin(req)) {
+  if (await authenticateAdmin(req)) {
     const pid = searchParams.get("projectId");
     if (!pid) {
       return NextResponse.json({ error: "projectId required for admin" }, { status: 400 });
     }
     projectId = pid;
   } else {
-    const auth = authenticate(req);
+    const auth = await authenticate(req);
     if (!auth.valid) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
     projectId = auth.projectId;
   }
 
+  await initDb();
+  const sql = getDb();
   const limit = Math.min(Number(searchParams.get("limit") ?? 50), 200);
   const offset = Number(searchParams.get("offset") ?? 0);
   const source = searchParams.get("source");
 
-  let query = "SELECT * FROM leads WHERE project_id = ?";
-  const params: (string | number)[] = [projectId];
-
+  let leads;
   if (source) {
-    query += " AND source = ?";
-    params.push(source);
+    leads = await sql`SELECT * FROM leads WHERE project_id = ${projectId} AND source = ${source} ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`;
+  } else {
+    leads = await sql`SELECT * FROM leads WHERE project_id = ${projectId} ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`;
   }
 
-  query += " ORDER BY created_at DESC LIMIT ? OFFSET ?";
-  params.push(limit, offset);
+  const [{ count }] = await sql`SELECT COUNT(*)::int as count FROM leads WHERE project_id = ${projectId}`;
 
-  const leads = db.prepare(query).all(...params);
-  const total = db.prepare(
-    "SELECT COUNT(*) as count FROM leads WHERE project_id = ?"
-  ).get(projectId) as { count: number };
-
-  return NextResponse.json({ leads, total: total.count, limit, offset });
+  return NextResponse.json({ leads, total: count, limit, offset });
 }

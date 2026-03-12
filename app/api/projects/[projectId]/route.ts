@@ -1,61 +1,59 @@
 import { NextRequest, NextResponse } from "next/server";
-import getDb from "@/lib/db";
+import getDb, { initDb } from "@/lib/db";
 import { authenticateAdmin } from "@/lib/auth";
 
 type Params = { params: Promise<{ projectId: string }> };
 
-// GET /api/projects/:id
 export async function GET(req: NextRequest, { params }: Params) {
-  if (!authenticateAdmin(req)) {
+  if (!(await authenticateAdmin(req))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const { projectId } = await params;
-  const db = getDb();
+  await initDb();
+  const sql = getDb();
 
-  const project = db.prepare("SELECT * FROM projects WHERE id = ?").get(projectId);
-  if (!project) {
+  const projects = await sql`SELECT * FROM projects WHERE id = ${projectId}`;
+  if (projects.length === 0) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const leadCount = db.prepare(
-    "SELECT COUNT(*) as count FROM leads WHERE project_id = ?"
-  ).get(projectId) as { count: number };
+  const [{ count }] = await sql`SELECT COUNT(*)::int as count FROM leads WHERE project_id = ${projectId}`;
 
-  return NextResponse.json({ ...project, lead_count: leadCount.count });
+  return NextResponse.json({ ...projects[0], lead_count: count });
 }
 
-// PATCH /api/projects/:id
 export async function PATCH(req: NextRequest, { params }: Params) {
-  if (!authenticateAdmin(req)) {
+  if (!(await authenticateAdmin(req))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const { projectId } = await params;
   const { name } = await req.json();
-
   if (!name) {
     return NextResponse.json({ error: "name is required" }, { status: 400 });
   }
 
-  const db = getDb();
-  db.prepare("UPDATE projects SET name = ? WHERE id = ?").run(name, projectId);
+  await initDb();
+  const sql = getDb();
+  await sql`UPDATE projects SET name = ${name} WHERE id = ${projectId}`;
 
   return NextResponse.json({ success: true });
 }
 
-// DELETE /api/projects/:id
 export async function DELETE(req: NextRequest, { params }: Params) {
-  if (!authenticateAdmin(req)) {
+  if (!(await authenticateAdmin(req))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const { projectId } = await params;
-  const db = getDb();
+  await initDb();
+  const sql = getDb();
 
-  db.prepare("DELETE FROM leads WHERE project_id = ?").run(projectId);
-  db.prepare("DELETE FROM api_keys WHERE project_id = ?").run(projectId);
-  db.prepare("DELETE FROM projects WHERE id = ?").run(projectId);
+  await sql`DELETE FROM leads WHERE project_id = ${projectId}`;
+  await sql`DELETE FROM api_keys WHERE project_id = ${projectId}`;
+  await sql`DELETE FROM notification_config WHERE project_id = ${projectId}`;
+  await sql`DELETE FROM projects WHERE id = ${projectId}`;
 
   return NextResponse.json({ success: true });
 }

@@ -1,27 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
-import getDb from "@/lib/db";
+import getDb, { initDb } from "@/lib/db";
 import { authenticateAdmin } from "@/lib/auth";
 
 type Params = { params: Promise<{ projectId: string }> };
 
-// GET /api/projects/:id/notifications — get notification config
 export async function GET(req: NextRequest, { params }: Params) {
-  if (!authenticateAdmin(req)) {
+  if (!(await authenticateAdmin(req))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const { projectId } = await params;
-  const db = getDb();
+  await initDb();
+  const sql = getDb();
 
-  const config = db
-    .prepare("SELECT * FROM notification_config WHERE project_id = ?")
-    .get(projectId) as Record<string, unknown> | undefined;
+  const rows = await sql`SELECT * FROM notification_config WHERE project_id = ${projectId}`;
 
-  if (!config) {
+  if (rows.length === 0) {
     return NextResponse.json({ configured: false });
   }
 
-  // Never return the full API key — just show a masked version
+  const config = rows[0];
   const maskedKey = config.mailgun_api_key
     ? String(config.mailgun_api_key).slice(0, 8) + "..." + String(config.mailgun_api_key).slice(-4)
     : "";
@@ -37,9 +35,8 @@ export async function GET(req: NextRequest, { params }: Params) {
   });
 }
 
-// PUT /api/projects/:id/notifications — create or update notification config
 export async function PUT(req: NextRequest, { params }: Params) {
-  if (!authenticateAdmin(req)) {
+  if (!(await authenticateAdmin(req))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -55,59 +52,47 @@ export async function PUT(req: NextRequest, { params }: Params) {
   } = body;
 
   if (!to_email || !mailgun_domain) {
-    return NextResponse.json(
-      { error: "to_email and mailgun_domain are required" },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "to_email and mailgun_domain are required" }, { status: 400 });
   }
 
-  const db = getDb();
+  await initDb();
+  const sql = getDb();
 
-  // If updating an existing config and no new API key provided, keep the old one
-  const existing = db.prepare("SELECT mailgun_api_key FROM notification_config WHERE project_id = ?").get(projectId) as { mailgun_api_key: string } | undefined;
-  const finalApiKey = mailgun_api_key || existing?.mailgun_api_key;
+  const existing = await sql`SELECT mailgun_api_key FROM notification_config WHERE project_id = ${projectId}`;
+  const finalApiKey = mailgun_api_key || existing[0]?.mailgun_api_key;
 
   if (!finalApiKey) {
-    return NextResponse.json(
-      { error: "mailgun_api_key is required" },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "mailgun_api_key is required" }, { status: 400 });
   }
 
-  db.prepare(`
+  const enabledInt = enabled ? 1 : 0;
+
+  await sql`
     INSERT INTO notification_config (project_id, enabled, to_email, from_name, mailgun_api_key, mailgun_domain, mailgun_base_url, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    VALUES (${projectId}, ${enabledInt}, ${to_email}, ${from_name}, ${finalApiKey}, ${mailgun_domain}, ${mailgun_base_url}, now())
     ON CONFLICT(project_id) DO UPDATE SET
-      enabled = excluded.enabled,
-      to_email = excluded.to_email,
-      from_name = excluded.from_name,
-      mailgun_api_key = excluded.mailgun_api_key,
-      mailgun_domain = excluded.mailgun_domain,
-      mailgun_base_url = excluded.mailgun_base_url,
-      updated_at = datetime('now')
-  `).run(
-    projectId,
-    enabled ? 1 : 0,
-    to_email,
-    from_name,
-    finalApiKey,
-    mailgun_domain,
-    mailgun_base_url
-  );
+      enabled = EXCLUDED.enabled,
+      to_email = EXCLUDED.to_email,
+      from_name = EXCLUDED.from_name,
+      mailgun_api_key = EXCLUDED.mailgun_api_key,
+      mailgun_domain = EXCLUDED.mailgun_domain,
+      mailgun_base_url = EXCLUDED.mailgun_base_url,
+      updated_at = now()
+  `;
 
   return NextResponse.json({ success: true });
 }
 
-// DELETE /api/projects/:id/notifications — remove notification config
 export async function DELETE(req: NextRequest, { params }: Params) {
-  if (!authenticateAdmin(req)) {
+  if (!(await authenticateAdmin(req))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const { projectId } = await params;
-  const db = getDb();
+  await initDb();
+  const sql = getDb();
 
-  db.prepare("DELETE FROM notification_config WHERE project_id = ?").run(projectId);
+  await sql`DELETE FROM notification_config WHERE project_id = ${projectId}`;
 
   return NextResponse.json({ success: true });
 }

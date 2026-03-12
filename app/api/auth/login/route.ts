@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import getDb from "@/lib/db";
+import getDb, { initDb } from "@/lib/db";
 import { verifyPassword } from "@/lib/crypto";
 import { createSession } from "@/lib/session";
 
@@ -11,17 +11,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Email and password are required" }, { status: 400 });
     }
 
-    const db = getDb();
-    const user = db
-      .prepare("SELECT id, name, email, password_hash, verified FROM users WHERE email = ?")
-      .get(email.toLowerCase()) as {
-        id: string;
-        name: string;
-        email: string;
-        password_hash: string;
-        verified: number;
-      } | undefined;
+    await initDb();
+    const sql = getDb();
+    const rows = await sql`SELECT id, name, email, password_hash, verified FROM users WHERE email = ${email.toLowerCase()}`;
 
+    const user = rows[0];
     if (!user || !verifyPassword(password, user.password_hash)) {
       return NextResponse.json({ error: "Invalid email or password" }, { status: 401 });
     }

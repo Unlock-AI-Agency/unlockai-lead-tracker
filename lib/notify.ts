@@ -1,6 +1,6 @@
 import Mailgun from "mailgun.js";
 import FormData from "form-data";
-import getDb from "./db";
+import getDb, { initDb } from "./db";
 
 type NotificationConfig = {
   project_id: string;
@@ -21,11 +21,11 @@ type LeadData = {
   metadata?: Record<string, unknown> | null;
 };
 
-function getConfig(projectId: string): NotificationConfig | null {
-  const db = getDb();
-  return db
-    .prepare("SELECT * FROM notification_config WHERE project_id = ? AND enabled = 1")
-    .get(projectId) as NotificationConfig | null;
+async function getConfig(projectId: string): Promise<NotificationConfig | null> {
+  await initDb();
+  const sql = getDb();
+  const rows = await sql`SELECT * FROM notification_config WHERE project_id = ${projectId} AND enabled = 1`;
+  return rows.length > 0 ? (rows[0] as NotificationConfig) : null;
 }
 
 function sourceLabel(source: string): string {
@@ -67,30 +67,16 @@ function linkCell(type: "email" | "phone", value: string): string {
 function buildMetadataRows(metadata: Record<string, unknown> | null | undefined): string {
   if (!metadata) return "";
   const fieldLabels: Record<string, string> = {
-    address: "Address",
-    roofAge: "Roof Age",
-    yearBuilt: "Year Built",
-    squareFt: "Square Footage",
-    drivers: "Drivers",
-    vins: "Vehicles / VINs",
-    currentCoverage: "Current Coverage",
-    riderExperience: "Rider Experience",
-    rvType: "RV Type",
-    fullTimeUse: "Full-Time Use",
-    boatType: "Boat Type",
-    boatLength: "Boat Length",
-    boatValue: "Boat Value",
-    waterType: "Water Type",
-    existingPolicies: "Existing Policies",
-    desiredCoverage: "Desired Coverage",
-    businessType: "Business Type",
-    employees: "Employees",
-    annualRevenue: "Annual Revenue",
-    personalPropertyValue: "Personal Property Value",
-    floodZone: "Flood Zone",
-    message: "Message",
+    address: "Address", roofAge: "Roof Age", yearBuilt: "Year Built",
+    squareFt: "Square Footage", drivers: "Drivers", vins: "Vehicles / VINs",
+    currentCoverage: "Current Coverage", riderExperience: "Rider Experience",
+    rvType: "RV Type", fullTimeUse: "Full-Time Use", boatType: "Boat Type",
+    boatLength: "Boat Length", boatValue: "Boat Value", waterType: "Water Type",
+    existingPolicies: "Existing Policies", desiredCoverage: "Desired Coverage",
+    businessType: "Business Type", employees: "Employees",
+    annualRevenue: "Annual Revenue", personalPropertyValue: "Personal Property Value",
+    floodZone: "Flood Zone", message: "Message",
   };
-
   return Object.entries(metadata)
     .filter(([, v]) => v != null && v !== "")
     .map(([k, v]) => row(fieldLabels[k] || k, String(v)))
@@ -100,14 +86,9 @@ function buildMetadataRows(metadata: Record<string, unknown> | null | undefined)
 function buildHtml(lead: LeadData, projectName: string): string {
   const badge = sourceBadgeColor(lead.source);
   const timestamp = new Date().toLocaleString("en-US", {
-    timeZone: "America/Chicago",
-    dateStyle: "long",
-    timeStyle: "short",
+    timeZone: "America/Chicago", dateStyle: "long", timeStyle: "short",
   });
-
-  const metadataRows = buildMetadataRows(
-    lead.metadata as Record<string, unknown> | null
-  );
+  const metadataRows = buildMetadataRows(lead.metadata as Record<string, unknown> | null);
 
   return `
 <div style="font-family:'Helvetica Neue',Arial,sans-serif;max-width:600px;margin:0 auto;background:#ffffff">
@@ -138,25 +119,19 @@ function buildHtml(lead: LeadData, projectName: string): string {
 
 function buildText(lead: LeadData, projectName: string): string {
   const lines = [
-    `New lead captured — ${projectName}`,
-    ``,
+    `New lead captured — ${projectName}`, ``,
     `Name: ${lead.name || "Not provided"}`,
     `Email: ${lead.email || "Not provided"}`,
     `Phone: ${lead.phone || "Not provided"}`,
   ];
   if (lead.type) lines.push(`Type: ${lead.type}`);
   lines.push(`Source: ${sourceLabel(lead.source)}`);
-
   if (lead.metadata) {
     for (const [k, v] of Object.entries(lead.metadata)) {
       if (v != null && v !== "") lines.push(`${k}: ${v}`);
     }
   }
-
-  lines.push(
-    ``,
-    `Captured at: ${new Date().toLocaleString("en-US", { timeZone: "America/Chicago" })}`
-  );
+  lines.push(``, `Captured at: ${new Date().toLocaleString("en-US", { timeZone: "America/Chicago" })}`);
   return lines.join("\n");
 }
 
@@ -165,16 +140,12 @@ export async function notifyLead(
   projectName: string,
   lead: LeadData
 ): Promise<void> {
-  const config = getConfig(projectId);
+  const config = await getConfig(projectId);
   if (!config) return;
 
   try {
     const mailgun = new Mailgun(FormData);
-    const mg = mailgun.client({
-      username: "api",
-      key: config.mailgun_api_key,
-      url: config.mailgun_base_url,
-    });
+    const mg = mailgun.client({ username: "api", key: config.mailgun_api_key, url: config.mailgun_base_url });
 
     const fromEmail = `${config.from_name} <noreply@${config.mailgun_domain}>`;
     const subject = lead.type
