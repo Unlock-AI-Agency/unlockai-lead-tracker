@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuid } from "uuid";
 import getDb from "@/lib/db";
 import { authenticate, authenticateAdmin } from "@/lib/auth";
+import { notifyLead } from "@/lib/notify";
 
 // POST /api/leads — record a new lead (API key auth)
 export async function POST(req: NextRequest) {
@@ -31,6 +32,19 @@ export async function POST(req: NextRequest) {
       type ?? null,
       metadata ? JSON.stringify(metadata) : null
     );
+
+    // Get project name for the email
+    const project = db.prepare("SELECT name FROM projects WHERE id = ?").get(auth.projectId) as { name: string } | undefined;
+
+    // Fire-and-forget: send notification email
+    notifyLead(auth.projectId, project?.name ?? auth.projectSlug, {
+      source,
+      name,
+      email,
+      phone,
+      type,
+      metadata,
+    }).catch(() => {});
 
     return NextResponse.json({ id, status: "recorded" }, { status: 201 });
   } catch (err: unknown) {

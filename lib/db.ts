@@ -59,6 +59,20 @@ function getDb() {
       CREATE INDEX IF NOT EXISTS idx_leads_source ON leads(source);
     `);
 
+    // Notification config (per-project email settings)
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS notification_config (
+        project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        to_email TEXT NOT NULL,
+        from_name TEXT NOT NULL DEFAULT 'Lead Tracker',
+        mailgun_api_key TEXT NOT NULL,
+        mailgun_domain TEXT NOT NULL,
+        mailgun_base_url TEXT NOT NULL DEFAULT 'https://api.mailgun.net',
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `);
+
     // Auto-migrate: seed from env vars if projects table is empty
     const count = db.prepare("SELECT COUNT(*) as c FROM projects").get() as { c: number };
     if (count.c === 0) {
