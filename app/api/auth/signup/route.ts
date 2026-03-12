@@ -62,9 +62,24 @@ export async function POST(req: NextRequest) {
       : new URL(req.url).origin;
     const verifyUrl = `${baseUrl}/verify?token=${verifyToken}`;
 
-    await sendVerificationEmail(email, name, verifyUrl);
+    // Try to send verification email, but don't block signup if it fails
+    let emailSent = true;
+    try {
+      await sendVerificationEmail(email, name, verifyUrl);
+    } catch (emailErr) {
+      console.error("Failed to send verification email:", emailErr);
+      emailSent = false;
+      // Auto-verify the user if we can't send email
+      db.prepare("UPDATE users SET verified = 1, verify_token = NULL WHERE id = ?").run(id);
+    }
 
-    return NextResponse.json({ success: true, message: "Check your email to verify your account" }, { status: 201 });
+    return NextResponse.json({
+      success: true,
+      message: emailSent
+        ? "Check your email to verify your account"
+        : "Account created! Email verification skipped — you can log in now.",
+      emailSent,
+    }, { status: 201 });
   } catch (err: unknown) {
     console.error("Signup error:", err);
     const message = err instanceof Error ? err.message : "Signup failed";

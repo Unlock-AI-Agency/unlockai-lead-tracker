@@ -13,6 +13,7 @@ export default function SignUpPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
+  const [successMsg, setSuccessMsg] = useState("");
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -30,6 +31,9 @@ export default function SignUpPage() {
       const data = await res.json();
       if (!res.ok) { setError(data.error); return; }
       setSuccess(true);
+      setSuccessMsg(data.emailSent === false
+        ? "Account created! You can log in now."
+        : "Verification email sent!");
     } catch {
       setError("Something went wrong. Please try again.");
     } finally {
@@ -57,10 +61,12 @@ export default function SignUpPage() {
           <CardContent>
             {success ? (
               <div className="rounded-lg border border-chart-4/30 bg-chart-4/10 p-4 text-center">
-                <p className="text-sm font-medium text-foreground">Verification email sent!</p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Check your inbox at <strong>{email}</strong> and click the link to activate.
-                </p>
+                <p className="text-sm font-medium text-foreground">{successMsg}</p>
+                {successMsg.includes("Verification") && (
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Check your inbox at <strong>{email}</strong> and click the link to activate.
+                  </p>
+                )}
                 <Link href="/login">
                   <Button variant="outline" className="mt-4">Go to Login</Button>
                 </Link>
